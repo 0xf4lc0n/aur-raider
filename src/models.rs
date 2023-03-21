@@ -23,7 +23,13 @@ impl TryFrom<Vec<String>> for BasicPackageData {
     fn try_from(source: Vec<String>) -> Result<Self, Self::Error> {
         let mut iter = source.into_iter();
         let name = iter.next().ok_or(ModelError::MissingSourceData)?;
-        let path_to_additional_data = iter.next().ok_or(ModelError::MissingSourceData)?;
+
+        let mut path_to_additional_data = iter.next().ok_or(ModelError::MissingSourceData)?;
+
+        if let Some(idx) = path_to_additional_data.rfind('/') {
+            path_to_additional_data = path_to_additional_data[idx..].to_string();
+        }
+
         let version = iter.next().ok_or(ModelError::MissingSourceData)?;
         let votes = iter
             .next()
