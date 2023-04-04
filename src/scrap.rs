@@ -137,4 +137,36 @@ impl AurScraper {
 
         Ok(dependencies)
     }
+
+    pub async fn get_comments(&self, url: &str) -> Result<()> {
+        let response = self.http_client.get(url).send().await?;
+        let body = response.text().await?;
+        let html_content = Html::parse_document(&body);
+
+        for comments_container in html_content.select(&DIV_COMMENTS_SELECTOR) {
+            for (comment_header, comment_content) in comments_container
+                .select(&H4_COMMENT_HEADER_SELECTOR)
+                .zip(comments_container.select(&DIV_COMMENT_CONTENT_SELECTOR))
+            {
+                Self::delete_tags(comment_header.inner_html().trim().to_string());
+                Self::delete_tags(comment_content.inner_html().trim().to_string());
+            }
+        }
+
+        Ok(())
+    }
+
+    fn delete_tags(mut html: String) -> String {
+        while let Some(s_idx) = html.find('<') {
+            let e_idx = html[s_idx..].find('>').unwrap();
+            html = html
+                .chars()
+                .take(s_idx)
+                .filter(|c| c.is_ascii())
+                .chain(html.chars().skip(s_idx + e_idx + 1))
+                .collect();
+        }
+
+        html
+    }
 }

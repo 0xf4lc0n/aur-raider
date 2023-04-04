@@ -12,4 +12,10 @@ lazy_static! {
     pub static ref UL_DEPS_SELECTOR: Selector = Selector::parse("ul#pkgdepslist").unwrap();
     pub static ref LI_SELECTOR: Selector = Selector::parse("li").unwrap();
     pub static ref EM_SELECTOR: Selector = Selector::parse("em").unwrap();
+    pub static ref DIV_COMMENTS_SELECTOR: Selector = Selector::parse("div.comments").unwrap();
+    pub static ref H4_COMMENT_HEADER_SELECTOR: Selector =
+        Selector::parse("h4.comment-header").unwrap();
+    pub static ref DIV_COMMENT_CONTENT_SELECTOR: Selector =
+        Selector::parse("div.article-content").unwrap();
+    pub static ref P_SELECTOR: Selector = Selector::parse("p").unwrap();
 }
