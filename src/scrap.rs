@@ -6,7 +6,7 @@ use crate::{
 };
 use anyhow::{Context, Result};
 use reqwest::Client;
-use scraper::Html;
+use scraper::{ElementRef, Html};
 
 pub struct AurScraper {
     http_client: Client,
@@ -33,12 +33,7 @@ impl AurScraper {
                     for td in tr.select(&TD_SELECTOR) {
                         if let Some(a) = td.select(&A_SELECTOR).next() {
                             package_basic_info.push(a.inner_html().trim().to_string());
-                            // TODO: extract to separate function
-                            package_basic_info.push(
-                                a.value()
-                                    .attr("href")
-                                    .map_or("".to_string(), |s| s.to_string()),
-                            );
+                            package_basic_info.push(extract_attribute_value(a, "href"));
                         } else {
                             package_basic_info.push(td.inner_html().trim().to_string());
                         }
@@ -169,4 +164,10 @@ impl AurScraper {
 
         html
     }
+}
+
+fn extract_attribute_value(el: ElementRef, attr_name: &str) -> String {
+    el.value()
+        .attr(attr_name)
+        .map_or("".to_string(), |s| s.to_string())
 }
