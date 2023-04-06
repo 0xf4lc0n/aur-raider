@@ -158,6 +158,12 @@ pub struct PackageDependency {
     pub packages: Vec<String>,
 }
 
+#[derive(Debug)]
+pub struct Comment {
+    pub header: String,
+    pub content: String,
+}
+
 #[derive(Error, Debug)]
 pub enum ModelError {
     #[error("Source is missing data required to create struct")]

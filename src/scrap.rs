@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    models::{AdditionalPackageData, BasicPackageData, PackageData, PackageDependency},
+    models::{AdditionalPackageData, BasicPackageData, Comment, PackageData, PackageDependency},
     selectors::*,
 };
 use anyhow::{Context, Result};
@@ -133,33 +133,83 @@ impl AurScraper {
         Ok(dependencies)
     }
 
-    pub async fn get_comments(&self, url: &str) -> Result<()> {
-        let response = self.http_client.get(url).send().await?;
+    pub async fn get_comments(&self, package_url: &str) -> Result<()> {
+        let response = self.http_client.get(package_url).send().await?;
         let body = response.text().await?;
         let html_content = Html::parse_document(&body);
+        let mut comments = vec![];
 
-        for comments_container in html_content.select(&DIV_COMMENTS_SELECTOR) {
-            for (comment_header, comment_content) in comments_container
-                .select(&H4_COMMENT_HEADER_SELECTOR)
-                .zip(comments_container.select(&DIV_COMMENT_CONTENT_SELECTOR))
-            {
-                Self::delete_tags(comment_header.inner_html().trim().to_string());
-                Self::delete_tags(comment_content.inner_html().trim().to_string());
-            }
+        let last_comment_page_number = self
+            .get_url_param_for_last_comment_page(html_content)
+            .split('=')
+            .last()
+            .unwrap()
+            .parse::<i32>()
+            .unwrap();
+
+        for idx in (0..=last_comment_page_number).step_by(10) {
+            let comment_page_url = format!("{}?O={}", package_url, idx);
+
+            let cmmnts = self
+                .get_comments_from_page(&comment_page_url)
+                .await
+                .unwrap();
+
+            comments.extend(cmmnts);
         }
 
         Ok(())
     }
 
+    fn get_url_param_for_last_comment_page(&self, html_content: Html) -> String {
+        let comment_nav = html_content
+            .select(&P_COMMENT_HEADER_NAV_SELECTOR)
+            .next()
+            .unwrap();
+
+        let comment_pages = comment_nav
+            .select(&A_PAGE_SELECTOR)
+            .collect::<Vec<ElementRef>>();
+        let next_a = comment_pages.iter().last().unwrap();
+
+        extract_attribute_value(*next_a, "href")
+    }
+
+    pub async fn get_comments_from_page(&self, page_url: &str) -> Result<Vec<Comment>> {
+        let response = self.http_client.get(page_url).send().await?;
+        let body = response.text().await?;
+        let html_content = Html::parse_document(&body);
+
+        let mut comments = vec![];
+
+        for comments_container in html_content.select(&DIV_COMMENTS_SELECTOR) {
+            for (comment_header, comment_content) in comments_container
+                .select(&H4_COMMENT_HEADER_SELECTOR)
+                .zip(comments_container.select(&DIV_COMMENT_CONTENT_SELECTOR))
+                // Skip pinned comment
+                .skip(1)
+            {
+                let header = Self::delete_tags(comment_header.inner_html());
+                let content = Self::delete_tags(comment_content.inner_html());
+
+                comments.push(Comment { header, content })
+            }
+        }
+
+        Ok(comments)
+    }
+
     fn delete_tags(mut html: String) -> String {
+        html = html.lines().map(|l| l.trim()).collect();
+
         while let Some(s_idx) = html.find('<') {
-            let e_idx = html[s_idx..].find('>').unwrap();
+            let e_idx = html[s_idx..].find('>').unwrap_or(html.len() - 1);
             html = html
                 .chars()
                 .take(s_idx)
                 .filter(|c| c.is_ascii())
                 .chain(html.chars().skip(s_idx + e_idx + 1))
-                .collect();
+                .collect::<String>();
         }
 
         html

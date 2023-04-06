@@ -18,4 +18,7 @@ lazy_static! {
     pub static ref DIV_COMMENT_CONTENT_SELECTOR: Selector =
         Selector::parse("div.article-content").unwrap();
     pub static ref P_SELECTOR: Selector = Selector::parse("p").unwrap();
+    pub static ref P_COMMENT_HEADER_NAV_SELECTOR: Selector =
+        Selector::parse("p.comments-header-nav").unwrap();
+    pub static ref A_PAGE_SELECTOR: Selector = Selector::parse("a.page").unwrap();
 }
