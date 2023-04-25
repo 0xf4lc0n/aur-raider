@@ -10,6 +10,7 @@ pub struct PackageData {
     pub basic: BasicPackageData,
     pub additional: AdditionalPackageData,
     pub dependencies: Vec<PackageDependency>,
+    pub comments: Vec<Comment>
 }
 
 #[derive(Debug)]
