@@ -7,8 +7,9 @@ use crate::{
 use anyhow::{anyhow, Context, Result};
 use reqwest::Client;
 use scraper::{ElementRef, Html};
+use tokio::task::JoinSet;
 use tokio::time::Instant;
-use tracing::{debug, info};
+use tracing::{debug, info, error};
 
 pub struct AurScraper {
     http_client: Client,
@@ -21,77 +22,97 @@ impl AurScraper {
         }
     }
 
-    pub async fn get_packages_from_page(&self, url: &str) -> Result<Vec<PackageData>> {
-        let response = self.http_client.get(url).send().await?;
+    pub async fn get_packages_from_page(
+        http_client: Client,
+        url: &str,
+    ) -> Result<Vec<PackageData>> {
+        let response = http_client.get(url).send().await?;
         let body = response.text().await?;
         let html_content = Html::parse_document(&body);
 
         let mut packages_data = vec![];
+        let mut packages_basic_data = vec![];
 
         for table in html_content.select(&TABLE_RESULT_SELECTOR) {
             for tbody in table.select(&TBODY_SELECTOR) {
                 for tr in tbody.select(&TR_SELECTOR) {
-                    let mut package_basic_info = vec![];
+                    let basic_package_data = Self::basic_scrapping(tr).with_context(|| {
+                        format!("Failed to scrap basic data for package from page {}", url)
+                    })?;
 
-                    for td in tr.select(&TD_SELECTOR) {
-                        if let Some(a) = td.select(&A_SELECTOR).next() {
-                            package_basic_info.push(a.inner_html().trim().to_string());
-                            package_basic_info.push(extract_attribute_value(a, "href"));
-                        } else {
-                            package_basic_info.push(td.inner_html().trim().to_string());
-                        }
-                    }
-
-                    let basic_package_data = BasicPackageData::try_from(package_basic_info)
-                        .with_context(|| {
-                            format!("Failed to scrap basic data for package from page {}", url)
-                        })?;
-
-                    let url_to_details =
-                        format!("{}{}", url, basic_package_data.path_to_additional_data);
-
-                    let response = self.http_client.get(&url_to_details).send().await?;
-                    let body = response.text().await?;
-                    let package_details_html = Html::parse_document(&body);
-
-                    let additional_package_data = self
-                        .get_additional_package_data(&package_details_html)
-                        .await
-                        .with_context(|| {
-                            format!("Failed to scrap additional data for {} package", url)
-                        })?;
-
-                    let dependencies = self
-                        .get_dependencies(&package_details_html)
-                        .await
-                        .with_context(|| {
-                            format!("Failed to scrap dependencies for {} package", url)
-                        })?;
-
-                    let comments = self
-                        .get_comments(&url_to_details)
-                        .await
-                        .with_context(|| format!("Failed to scrap comments for {} package", url))?;
-
-                    packages_data.push(PackageData {
-                        basic: basic_package_data,
-                        additional: additional_package_data,
-                        dependencies,
-                        comments,
-                    });
-
-                    info!("Scrapped: {}", url_to_details);
+                    info!("Basicly scrapped: {}", basic_package_data.name);
+                    packages_basic_data.push(basic_package_data);
                 }
+            }
+        }
+
+        let mut set = tokio::task::JoinSet::new();
+
+        for basic in packages_basic_data {
+            let url_to_details = format!("{}{}", url, basic.path_to_additional_data);
+            let response = http_client.get(&url_to_details).send().await?;
+            let body = response.text().await?;
+            let package_details_html = Html::parse_document(&body);
+
+            let additional = Self::get_additional_package_data(&package_details_html)
+                .await
+                .with_context(|| {
+                    format!("Failed to scrap additional data for {} package", "url")
+                })?;
+
+            let dependencies = Self::get_dependencies(&package_details_html)
+                .await
+                .with_context(|| format!("Failed to scrap dependencies for {} package", "url"))?;
+
+            let http_client = http_client.clone();
+
+            set.spawn(async move {
+                let mut comments = vec![];
+                let mut local_set = Self::get_comments(http_client, url_to_details.clone())
+                    .await
+                    .unwrap();
+
+                while let Some(task_res) = local_set.join_next().await {
+                    let cmmnts = task_res.unwrap().unwrap();
+                    comments.extend(cmmnts);
+                }
+
+                info!("Fully scrapped: {}", url_to_details);
+                (basic, additional, dependencies, comments)
+            });
+        }
+
+        while let Some(task_res) = set.join_next().await {
+            match task_res {
+                Ok((basic, additional, dependencies, comments)) => packages_data.push(PackageData {
+                    basic,
+                    additional,
+                    dependencies,
+                    comments,
+                }),
+                Err(err) => error!("{:?}", err)
             }
         }
 
         Ok(packages_data)
     }
 
-    async fn get_additional_package_data(
-        &self,
-        html_content: &Html,
-    ) -> Result<AdditionalPackageData> {
+    fn basic_scrapping<'a>(tr: ElementRef<'a>) -> Result<BasicPackageData> {
+        let mut package_basic_info = vec![];
+
+        for td in tr.select(&TD_SELECTOR) {
+            if let Some(a) = td.select(&A_SELECTOR).next() {
+                package_basic_info.push(a.inner_html().trim().to_string());
+                package_basic_info.push(extract_attribute_value(a, "href"));
+            } else {
+                package_basic_info.push(td.inner_html().trim().to_string());
+            }
+        }
+
+        BasicPackageData::try_from(package_basic_info).map_err(|e| anyhow!(e))
+    }
+
+    async fn get_additional_package_data(html_content: &Html) -> Result<AdditionalPackageData> {
         let mut package_data = HashMap::new();
 
         for table in html_content.select(&TABLE_PKGINFO_SELECTOR) {
@@ -128,7 +149,7 @@ impl AurScraper {
         AdditionalPackageData::try_from(package_data).map_err(|err| anyhow!(err))
     }
 
-    async fn get_dependencies(&self, html_content: &Html) -> Result<Vec<PackageDependency>> {
+    async fn get_dependencies(html_content: &Html) -> Result<Vec<PackageDependency>> {
         let mut dependencies = vec![];
 
         for ul in html_content.select(&UL_DEPS_SELECTOR) {
@@ -151,13 +172,16 @@ impl AurScraper {
         Ok(dependencies)
     }
 
-    pub async fn get_comments(&self, package_url: &str) -> Result<Vec<Comment>> {
-        let response = self.http_client.get(package_url).send().await?;
+    pub async fn get_comments(
+        http_client: Client,
+        package_url: String,
+    ) -> Result<JoinSet<Result<Vec<Comment>>>> {
+        let response = http_client.get(&package_url).send().await?;
         let body = response.text().await?;
         let html_content = Html::parse_document(&body);
-        let mut comments = vec![];
+        //let mut comments = vec![];
 
-        let last_comment_page_number = self.get_last_comment_page_number(html_content);
+        let last_comment_page_number = Self::get_last_comment_page_number(html_content);
 
         let mut set = tokio::task::JoinSet::new();
 
@@ -165,20 +189,22 @@ impl AurScraper {
             let comment_page_url = format!("{}?O={}", package_url, idx);
 
             set.spawn(Self::get_comments_from_page(
-                self.http_client.clone(),
+                http_client.clone(),
                 comment_page_url,
             ));
         }
 
-        while let Some(task_res) = set.join_next().await {
-            let cmmnts = task_res.unwrap()?;
-            comments.extend(cmmnts);
-        }
+        return Ok(set);
 
-        Ok(comments)
+        //while let Some(task_res) = set.join_next().await {
+        //    let cmmnts = task_res.unwrap()?;
+        //    comments.extend(cmmnts);
+        //}
+
+        //Ok(comments)
     }
 
-    fn get_last_comment_page_number(&self, html_content: Html) -> usize {
+    fn get_last_comment_page_number(html_content: Html) -> usize {
         let comment_nav = html_content.select(&P_COMMENT_HEADER_NAV_SELECTOR).next();
 
         // Case when there is only one comment page
