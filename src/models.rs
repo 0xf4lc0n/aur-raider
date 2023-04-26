@@ -10,7 +10,7 @@ pub struct PackageData {
     pub basic: BasicPackageData,
     pub additional: AdditionalPackageData,
     pub dependencies: Vec<PackageDependency>,
-    pub comments: Vec<Comment>
+    pub comments: Vec<Comment>,
 }
 
 #[derive(Debug)]
@@ -96,7 +96,7 @@ impl TryFrom<Vec<String>> for BasicPackageData {
 pub struct AdditionalPackageData {
     pub git_clone_url: String,
     pub keywords: Option<String>,
-    pub license: String,
+    pub license: Option<String>,
     pub confilcts: Option<String>,
     pub provides: Option<String>,
     pub submitter: String,
@@ -115,9 +115,7 @@ impl TryFrom<HashMap<String, String>> for AdditionalPackageData {
                 field: "git_clone_url",
             })?;
         let keywords = source.remove("keywords");
-        let license = source
-            .remove("licenses")
-            .ok_or(ModelError::MissingSourceData { field: "license" })?;
+        let license = source.remove("licenses");
         let confilcts = source.remove("conflicts");
         let provides = source.remove("provides");
         let submitter = source
@@ -167,7 +165,7 @@ pub struct Comment {
 
 #[derive(Error, Debug)]
 pub enum ModelError {
-    #[error("Source is missing data required to create struct")]
+    #[error("Source lacks of data required to create struct. Missing field: {field}")]
     MissingSourceData { field: &'static str },
     #[error("Cannot parse data for {field} field")]
     ParseError {
