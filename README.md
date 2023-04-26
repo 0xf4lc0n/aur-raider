@@ -1,3 +1,3 @@
-# ztbd-scrapper
+# ztbd-scraper
 
-Rust scrapper for AUR repository.
+Scraper written in Rust for AUR repository.
