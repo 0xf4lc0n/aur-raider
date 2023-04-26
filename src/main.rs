@@ -1,6 +1,7 @@
 mod models;
 mod scrap;
 mod selectors;
+mod html;
 
 use std::sync::Arc;
 use tokio::time::Instant;
