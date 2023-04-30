@@ -9,9 +9,10 @@ use anyhow::{anyhow, Context, Result};
 use reqwest::Client;
 use scraper::{ElementRef, Html};
 use tokio::task::JoinSet;
-use tracing::info;
+use tracing::{info, error};
 
 pub static AUR_BASE_URL: &str = "https://aur.archlinux.org/packages";
+pub static AUR_PAGE_QUERY: &str = "?PP=250&SeB=nd&SB=p&O=";
 
 pub struct AurScraper {
     http_client: Client,
@@ -104,8 +105,10 @@ pub async fn get_page_and_scrap_packages(
     let mut details_and_comments = vec![];
 
     while let Some(task_result) = set.join_next().await {
-        let (details, deps, comments) = task_result.unwrap();
-        details_and_comments.push((details, deps, comments));
+        match task_result {
+            Ok((details, deps, comments)) => details_and_comments.push((details, deps, comments)),
+            Err(e) => error!("{}", e),
+        }
     }
 
     let duration = start.elapsed();

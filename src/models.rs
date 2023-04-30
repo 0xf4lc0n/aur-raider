@@ -1,11 +1,12 @@
 use anyhow::anyhow;
+use serde::{Serialize, Deserialize};
 use std::{
     collections::HashMap,
     num::{ParseFloatError, ParseIntError},
 };
 use thiserror::Error;
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct PackageData {
     pub basic: BasicPackageData,
     pub additional: AdditionalPackageData,
@@ -13,7 +14,7 @@ pub struct PackageData {
     pub comments: Vec<Comment>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct BasicPackageData {
     pub name: String,
     pub version: String,
@@ -92,7 +93,7 @@ impl TryFrom<Vec<String>> for BasicPackageData {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct AdditionalPackageData {
     pub git_clone_url: String,
     pub keywords: Option<String>,
@@ -151,13 +152,13 @@ impl TryFrom<HashMap<String, String>> for AdditionalPackageData {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct PackageDependency {
     pub group: String,
     pub packages: Vec<String>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Comment {
     pub header: String,
     pub content: String,
