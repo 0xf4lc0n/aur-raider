@@ -1,5 +1,5 @@
 use anyhow::anyhow;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     num::{ParseFloatError, ParseIntError},

@@ -1,5 +1,5 @@
 use anyhow::Result;
-use bson::{Bson, doc};
+use bson::{doc, Bson};
 use serde::Serialize;
 use tokio::{fs::File, io::AsyncWriteExt};
 
@@ -11,9 +11,7 @@ struct Test {
     surname: String,
 }
 
-pub fn serialize_to_bson(packages: Vec<PackageData>) -> Result<Vec<u8>>
-where
-{
+pub fn serialize_to_bson(packages: Vec<PackageData>) -> Result<Vec<u8>> {
     let bson_vec: Vec<Bson> = packages
         .into_iter()
         .map(|pkg| bson::to_bson(&pkg).unwrap())
@@ -28,7 +26,7 @@ where
 
 pub async fn save_to_binary_file(file_name: &str, bytes: &[u8]) -> Result<()> {
     let mut file = File::create(file_name).await?;
-    file.write_all(&bytes).await?;
+    file.write_all(bytes).await?;
     file.sync_all().await?;
     Ok(())
 }

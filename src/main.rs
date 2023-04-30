@@ -11,7 +11,6 @@ use serialization::{save_to_binary_file, serialize_to_bson};
 use std::sync::Arc;
 use tokio::time::Instant;
 use tracing::info;
-use tracing_subscriber;
 
 use crate::scrap::{get_page_and_scrap_packages, AurScraper, AUR_BASE_URL, AUR_PAGE_QUERY};
 
@@ -23,7 +22,7 @@ async fn main() {
     tracing_subscriber::fmt().init();
 
     match &cli.command {
-        Commands::ScrapToFs(fs_args) => scrap_and_save_to_fs(scraper, &fs_args).await,
+        Commands::ScrapToFs(fs_args) => scrap_and_save_to_fs(scraper, fs_args).await,
         Commands::ScrapToDb(_db_args) => todo!(),
         Commands::LoadFromFs(_db_args) => todo!(),
     }

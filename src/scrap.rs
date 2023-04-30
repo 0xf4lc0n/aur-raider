@@ -9,7 +9,7 @@ use anyhow::{anyhow, Context, Result};
 use reqwest::Client;
 use scraper::{ElementRef, Html};
 use tokio::task::JoinSet;
-use tracing::{info, error};
+use tracing::{error, info};
 
 pub static AUR_BASE_URL: &str = "https://aur.archlinux.org/packages";
 pub static AUR_PAGE_QUERY: &str = "?PP=250&SeB=nd&SB=p&O=";
@@ -48,7 +48,7 @@ impl AurScraper {
         &self,
         url: &str,
     ) -> Result<(AdditionalPackageData, Vec<PackageDependency>)> {
-        let html_content = self.get_parsed_page(&url).await?;
+        let html_content = self.get_parsed_page(url).await?;
         let (additional, dependencies) = scrap_package_details(&html_content)
             .with_context(|| format!("Failed to scrap details for {}", url))?;
 
@@ -57,7 +57,7 @@ impl AurScraper {
 
     #[allow(unused)]
     pub async fn get_package_comments_from_page(&self, url: &str) -> Result<Vec<Comment>> {
-        let html_content = self.get_parsed_page(&url).await?;
+        let html_content = self.get_parsed_page(url).await?;
         scrap_package_comments(html_content)
     }
 
@@ -65,7 +65,7 @@ impl AurScraper {
         &self,
         url: &str,
     ) -> Result<(AdditionalPackageData, Vec<PackageDependency>, Vec<Comment>)> {
-        let html_content = self.get_parsed_page(&url).await?;
+        let html_content = self.get_parsed_page(url).await?;
 
         let (additional, dependencies) = scrap_package_details(&html_content)
             .with_context(|| format!("Failed to scrap details for {}", url))?;
@@ -146,7 +146,7 @@ fn scrap_packages_from_page(html_content: Html) -> Result<Vec<BasicPackageData>>
     Ok(packages_basic_data)
 }
 
-fn scrap_package_basic_data<'a>(tr: ElementRef<'a>) -> Result<BasicPackageData> {
+fn scrap_package_basic_data(tr: ElementRef<'_>) -> Result<BasicPackageData> {
     let mut package_basic_info = vec![];
 
     for td in tr.select(&TD_SELECTOR) {
@@ -164,11 +164,11 @@ fn scrap_package_basic_data<'a>(tr: ElementRef<'a>) -> Result<BasicPackageData> 
 fn scrap_package_details(
     package_details: &Html,
 ) -> Result<(AdditionalPackageData, Vec<PackageDependency>)> {
-    let additional = scrap_package_additional_data(&package_details)
-        .with_context(|| format!("Failed to scrap additional data for package"))?;
+    let additional = scrap_package_additional_data(package_details)
+        .with_context(|| "Failed to scrap additional data for package".to_string())?;
 
-    let dependencies = scrap_package_dependencies(&package_details)
-        .with_context(|| format!("Failed to scrap dependencies for package"))?;
+    let dependencies = scrap_package_dependencies(package_details)
+        .with_context(|| "Failed to scrap dependencies for package".to_string())?;
 
     Ok((additional, dependencies))
 }
