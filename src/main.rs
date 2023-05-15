@@ -11,7 +11,7 @@ use serialization::{save_to_binary_file, serialize_to_bson};
 use std::fs::File;
 use std::sync::Arc;
 use tokio::time::Instant;
-use tracing::{error, info, Level};
+use tracing::{error, info, Level, debug};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 use crate::scrap::{get_page_and_scrap_packages, AurScraper, AUR_BASE_URL, AUR_PAGE_QUERY};
@@ -30,13 +30,7 @@ async fn main() {
                 .with_writer(log_file.with_min_level(Level::ERROR))
                 .with_filter(EnvFilter::new("error")),
         )
-        .with(
-            fmt::Layer::new().with_writer(
-                std::io::stdout
-                    .with_max_level(Level::INFO)
-                    .with_min_level(Level::INFO),
-            ),
-        )
+        .with(fmt::layer().with_filter(EnvFilter::from_default_env()))
         .init();
 
     match &cli.command {
@@ -47,11 +41,12 @@ async fn main() {
 }
 
 async fn scrap_and_save_to_fs(scraper: Arc<AurScraper>, cfg: &ToFsArgs) {
-    let end_page = cfg.end_page.unwrap_or(cfg.start_page + 1);
-    let pages_raneg = (cfg.start_page - 1)..(end_page);
+    let start_page = cfg.start_page - 1;
+    let end_page = cfg.end_page.unwrap_or(cfg.start_page);
+    let pages_range = start_page..(end_page);
     let start = Instant::now();
 
-    for i in pages_raneg {
+    for i in pages_range {
         let url = format!("{}{}{}", AUR_BASE_URL, AUR_PAGE_QUERY, i * 250);
 
         match get_page_and_scrap_packages(scraper.clone(), &url).await {
@@ -65,9 +60,5 @@ async fn scrap_and_save_to_fs(scraper: Arc<AurScraper>, cfg: &ToFsArgs) {
     }
 
     let duration = start.elapsed();
-    info!(
-        "Scraped {} pages of packages in {:?}",
-        end_page * 250,
-        duration
-    );
+    info!("Scraped {} pages of packages in {:?}", end_page - start_page, duration);
 }
