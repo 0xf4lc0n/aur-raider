@@ -1,4 +1,8 @@
-use std::{collections::HashMap, sync::Arc, time::Instant};
+use std::{
+    collections::HashMap,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use crate::{
     html::{delete_tags, extract_attribute_value},
@@ -30,7 +34,11 @@ impl AurScraper {
     }
 
     async fn get_parsed_page_with_client(http_client: Client, url: &str) -> Result<Html> {
-        let response = http_client.get(url).send().await?;
+        let response = http_client
+            .get(url)
+            .timeout(Duration::from_secs(10))
+            .send()
+            .await?;
         let body = response.text().await?;
         Ok(Html::parse_document(&body))
     }
@@ -81,10 +89,7 @@ pub async fn get_page_and_scrap_packages(
     url: &str,
 ) -> Result<Vec<PackageData>> {
     let start = Instant::now();
-    let packages_basic_data = scraper
-        .get_packages_basic_data_from_page(url)
-        .await
-        .unwrap();
+    let packages_basic_data = scraper.get_packages_basic_data_from_page(url).await?;
 
     let mut set = JoinSet::new();
 
@@ -95,16 +100,19 @@ pub async fn get_page_and_scrap_packages(
         set.spawn(async move {
             let (details, deps, comments) = scraper
                 .get_package_details_with_comments_from_page(&url)
-                .await
-                .unwrap();
+                .await?;
 
-            (details, deps, comments)
+            Result::<(AdditionalPackageData, Vec<PackageDependency>, Vec<Comment>)>::Ok((
+                details, deps, comments,
+            ))
         });
     }
 
     let mut details_and_comments = vec![];
 
     while let Some(task_result) = set.join_next().await {
+        let task_result = task_result.map_err(|e| anyhow!(e)).and_then(|tr| tr);
+
         match task_result {
             Ok((details, deps, comments)) => details_and_comments.push((details, deps, comments)),
             Err(e) => error!("{}", e),
