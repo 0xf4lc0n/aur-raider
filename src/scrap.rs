@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     sync::Arc,
+    thread,
     time::{Duration, Instant},
 };
 
@@ -13,7 +14,7 @@ use anyhow::{anyhow, Context, Result};
 use reqwest::Client;
 use scraper::{ElementRef, Html};
 use tokio::task::JoinSet;
-use tracing::{error, info};
+use tracing::{debug, error, info, instrument};
 
 pub static AUR_BASE_URL: &str = "https://aur.archlinux.org/packages";
 pub static AUR_PAGE_QUERY: &str = "?PP=250&SeB=nd&SB=p&O=";
@@ -33,6 +34,7 @@ impl AurScraper {
         Self::get_parsed_page_with_client(self.http_client.clone(), url).await
     }
 
+    #[instrument(skip(http_client))]
     async fn get_parsed_page_with_client(http_client: Client, url: &str) -> Result<Html> {
         let response = http_client
             .get(url)
@@ -43,6 +45,7 @@ impl AurScraper {
         Ok(Html::parse_document(&body))
     }
 
+    #[instrument(skip(self))]
     pub async fn get_packages_basic_data_from_page(
         &self,
         url: &str,
@@ -69,10 +72,12 @@ impl AurScraper {
         scrap_package_comments(html_content)
     }
 
+    #[instrument(skip(self))]
     pub async fn get_package_details_with_comments_from_page(
         &self,
         url: &str,
     ) -> Result<(AdditionalPackageData, Vec<PackageDependency>, Vec<Comment>)> {
+        debug!("Scraping package details with comments");
         let html_content = self.get_parsed_page(url).await?;
 
         let (additional, dependencies) = scrap_package_details(&html_content)
@@ -84,6 +89,7 @@ impl AurScraper {
     }
 }
 
+#[instrument(skip(scraper))]
 pub async fn get_page_and_scrap_packages(
     scraper: Arc<AurScraper>,
     url: &str,
@@ -92,30 +98,33 @@ pub async fn get_page_and_scrap_packages(
     let packages_basic_data = scraper.get_packages_basic_data_from_page(url).await?;
 
     let mut set = JoinSet::new();
-
-    for basic in &packages_basic_data {
-        let url = format!("{}{}", AUR_BASE_URL, basic.path_to_additional_data);
-        let scraper = scraper.clone();
-
-        set.spawn(async move {
-            let (details, deps, comments) = scraper
-                .get_package_details_with_comments_from_page(&url)
-                .await?;
-
-            Result::<(AdditionalPackageData, Vec<PackageDependency>, Vec<Comment>)>::Ok((
-                details, deps, comments,
-            ))
-        });
-    }
-
     let mut details_and_comments = vec![];
 
-    while let Some(task_result) = set.join_next().await {
-        let task_result = task_result.map_err(|e| anyhow!(e)).and_then(|tr| tr);
+    for chunk in packages_basic_data.chunks(30) {
+        for basic in chunk {
+            let url = format!("{}{}", AUR_BASE_URL, basic.path_to_additional_data);
+            let scraper = scraper.clone();
 
-        match task_result {
-            Ok((details, deps, comments)) => details_and_comments.push((details, deps, comments)),
-            Err(e) => error!("{}", e),
+            set.spawn(async move {
+                let (details, deps, comments) = scraper
+                    .get_package_details_with_comments_from_page(&url)
+                    .await?;
+
+                Result::<(AdditionalPackageData, Vec<PackageDependency>, Vec<Comment>)>::Ok((
+                    details, deps, comments,
+                ))
+            });
+        }
+
+        while let Some(task_result) = set.join_next().await {
+            let task_result = task_result.map_err(|e| anyhow!(e)).and_then(|tr| tr);
+
+            match task_result {
+                Ok((details, deps, comments)) => {
+                    details_and_comments.push((details, deps, comments))
+                }
+                Err(e) => error!("{}", e),
+            }
         }
     }
 
@@ -140,24 +149,39 @@ pub async fn get_page_and_scrap_packages(
 }
 
 fn scrap_packages_from_page(html_content: Html) -> Result<Vec<BasicPackageData>> {
+    let mut handles = vec![];
+
+    if let Some(table) = html_content.select(&TABLE_RESULT_SELECTOR).next() {
+        if let Some(tbody) = table.select(&TBODY_SELECTOR).next() {
+            handles = tbody
+                .select(&TR_SELECTOR)
+                .map(|tr| {
+                    let tr = format!("<table><tbody>{}<tbody><table>", tr.html());
+                    thread::spawn(|| scrap_package_basic_data(tr))
+                })
+                .collect();
+        }
+    }
+
     let mut packages_basic_data = vec![];
 
-    for table in html_content.select(&TABLE_RESULT_SELECTOR) {
-        for tbody in table.select(&TBODY_SELECTOR) {
-            for tr in tbody.select(&TR_SELECTOR) {
-                let basic_package_data = scrap_package_basic_data(tr)?;
-                packages_basic_data.push(basic_package_data);
+    for handle in handles {
+        match handle.join() {
+            Ok(basic_package_data) => {
+                packages_basic_data.push(basic_package_data?);
             }
+            Err(e) => error!("{:?}", e),
         }
     }
 
     Ok(packages_basic_data)
 }
 
-fn scrap_package_basic_data(tr: ElementRef<'_>) -> Result<BasicPackageData> {
+fn scrap_package_basic_data(tr: String) -> Result<BasicPackageData> {
+    let tr_fragment = Html::parse_fragment(&tr.trim());
     let mut package_basic_info = vec![];
 
-    for td in tr.select(&TD_SELECTOR) {
+    for td in tr_fragment.select(&TD_SELECTOR) {
         if let Some(a) = td.select(&A_SELECTOR).next() {
             package_basic_info.push(a.inner_html().trim().to_string());
             package_basic_info.push(extract_attribute_value(a, "href"));
