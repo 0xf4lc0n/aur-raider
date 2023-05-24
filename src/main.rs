@@ -4,6 +4,7 @@ mod models;
 mod scrap;
 mod selectors;
 mod serialization;
+mod database;
 
 use clap::Parser;
 use cli::{Cli, Commands, ToFsArgs};

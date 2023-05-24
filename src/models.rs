@@ -14,6 +14,63 @@ pub struct PackageData {
     pub comments: Vec<Comment>,
 }
 
+impl TryFrom<HashMap<String, String>> for PackageData {
+    type Error = ModelError;
+
+    fn try_from(mut source: HashMap<String, String>) -> Result<Self, Self::Error> {
+        let mut getter = |k| get_obligatory_field(&mut source, k);
+
+        let name = getter("name")?;
+        let path_to_additional_data = getter("path_to_additional_data")?;
+        let version = getter("version")?;
+        let votes =
+            getter("votes")?
+                .parse()
+                .map_err(|e: ParseIntError| ModelError::ParseError {
+                    field: "votes",
+                    source: anyhow!(e),
+                })?;
+        let popularity = getter("popularity")?
+            .parse()
+            .map_err(|e: ParseFloatError| ModelError::ParseError {
+                field: "popularity",
+                source: anyhow!(e),
+            })?;
+        let description = getter("description")?;
+        let maintainer = getter("maintainer")?;
+        let last_updated = getter("last_updated")?;
+
+        let basic = BasicPackageData {
+            name,
+            path_to_additional_data,
+            version,
+            votes,
+            popularity,
+            description,
+            maintainer,
+            last_updated,
+        };
+
+        let additional = AdditionalPackageData::try_from(source)?;
+
+        Ok(Self {
+            basic,
+            additional,
+            comments: vec![],
+            dependencies: vec![],
+        })
+    }
+}
+
+fn get_obligatory_field(
+    source: &mut HashMap<String, String>,
+    key: &'static str,
+) -> Result<String, ModelError> {
+    source
+        .remove(key)
+        .ok_or(ModelError::MissingSourceData { field: key })
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BasicPackageData {
     pub name: String,
@@ -101,7 +158,6 @@ pub struct AdditionalPackageData {
     pub confilcts: Option<String>,
     pub provides: Option<String>,
     pub submitter: String,
-    pub popularity: f32,
     // TODO: use chrono
     pub first_submitted: String,
 }
@@ -122,16 +178,6 @@ impl TryFrom<HashMap<String, String>> for AdditionalPackageData {
         let submitter = source
             .remove("submitter")
             .ok_or(ModelError::MissingSourceData { field: "submitter" })?;
-        let popularity = source
-            .remove("popularity")
-            .ok_or(ModelError::MissingSourceData {
-                field: "popularity",
-            })?
-            .parse()
-            .map_err(|e: ParseFloatError| ModelError::ParseError {
-                field: "popularity",
-                source: anyhow!(e),
-            })?;
         let first_submitted =
             source
                 .remove("firstsubmitted")
@@ -146,7 +192,6 @@ impl TryFrom<HashMap<String, String>> for AdditionalPackageData {
             confilcts,
             provides,
             submitter,
-            popularity,
             first_submitted,
         })
     }
@@ -162,6 +207,19 @@ pub struct PackageDependency {
 pub struct Comment {
     pub header: String,
     pub content: String,
+}
+
+impl TryFrom<HashMap<String, String>> for Comment {
+    type Error = ModelError;
+
+    fn try_from(mut source: HashMap<String, String>) -> Result<Self, Self::Error> {
+        let mut getter = |k| get_obligatory_field(&mut source, k);
+
+        let header = getter("header")?;
+        let content = getter("content")?;
+
+        Ok(Self { header, content })
+    }
 }
 
 #[derive(Error, Debug)]
