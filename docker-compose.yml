@@ -1,0 +1,25 @@
+version: "3.9"
+services:
+  skytable-db:
+    image: skytable/sdb:v0.7.5
+    ports:
+      - 2003:2003
+    container_name: sky
+    volumes:
+      - ./volumes/skytable:/var/lib/skytable
+
+  redis-db:
+    image: redis
+    ports:
+      - 6379:6379
+    container_name: red
+    volumes:
+      - ./volumes/redis:/data
+  surreal-db:
+    image: surrealdb/surrealdb:latest
+    ports:
+      - 8000:8000
+    command: start
+    container_name: sur
+    volumes:
+      - ./volumes/surreal:/mydata
