@@ -5,7 +5,8 @@ use redis::{self, Client, Commands, Connection};
 
 use crate::models::{Comment, PackageData, PackageDependency};
 
-// TODO: Implement DatabaseIO trait
+use super::DatabasePackageIO;
+
 pub struct RedisIO {
     client: Client,
 }
@@ -20,7 +21,20 @@ impl RedisIO {
         self.client.get_connection().map_err(|e| anyhow!(e))
     }
 
-    pub fn insert_package_data(&self, pkg: PackageData) -> Result<()> {
+    fn flushdb(&self) -> Result<()> {
+        let mut conn = self.connect()?;
+        redis::cmd("flushdb").query(&mut conn)?;
+        Ok(())
+    }
+}
+
+impl DatabasePackageIO for RedisIO {
+    fn health_check(&self) -> Result<()> {
+        self.connect()?;
+        Ok(())
+    }
+
+    fn insert(&self, pkg: PackageData) -> Result<()> {
         let mut conn = self.connect()?;
 
         conn.hset_multiple(
@@ -84,7 +98,7 @@ impl RedisIO {
         Ok(())
     }
 
-    pub fn get_package_data(&self, name: &str) -> Result<PackageData> {
+    fn get(&self, name: &str) -> Result<PackageData> {
         let mut conn = self.connect()?;
 
         let mut pkg_dict: HashMap<String, String> = conn.hgetall(format!("pkgs:{}", name))?;
@@ -115,21 +129,15 @@ impl RedisIO {
 
         pkg.dependencies = dependencies;
 
-        return Ok(pkg);
-    }
-
-    fn flushdb(&self) -> Result<()> {
-        let mut conn = self.connect()?;
-        redis::cmd("flushdb").query(&mut conn)?;
-        Ok(())
+        Ok(pkg)
     }
 }
 
 #[cfg(test)]
 mod test {
-    use crate::models::{
+    use crate::{models::{
         AdditionalPackageData, BasicPackageData, Comment, PackageData, PackageDependency,
-    };
+    }, database::DatabasePackageIO};
 
     use super::RedisIO;
 
@@ -197,8 +205,8 @@ mod test {
 
         // Act
         redis.flushdb().unwrap();
-        redis.insert_package_data(pkg).unwrap();
-        let pkg = redis.get_package_data("Test").unwrap();
+        redis.insert(pkg).unwrap();
+        let pkg = redis.get("Test").unwrap();
 
         // Assert
         assert_eq!(pkg.basic.name, "Test");
