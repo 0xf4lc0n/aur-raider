@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use anyhow::{anyhow, Result};
 use redis::{self, Client, Commands, Connection};
 
-use crate::models::{Comment, PackageData};
+use crate::models::{Comment, PackageData, PackageDependency};
 
 // TODO: Implement DatabaseIO trait
 pub struct RedisIO {
@@ -23,39 +23,37 @@ impl RedisIO {
     pub fn insert_package_data(&self, pkg: PackageData) -> Result<()> {
         let mut conn = self.connect()?;
 
-        let res: Result<()> = conn
-            .hset_multiple(
-                format!("pkgs:{}", pkg.basic.name),
-                &[
-                    ("popularity", pkg.basic.popularity.to_string()),
-                    ("last_updated", pkg.basic.last_updated),
-                    ("description", pkg.basic.description),
-                    ("maintainer", pkg.basic.maintainer),
-                    ("version", pkg.basic.version),
-                    ("votes", pkg.basic.votes.to_string()),
-                    ("path_to_additional_data", pkg.basic.path_to_additional_data),
-                    ("firstsubmitted", pkg.additional.first_submitted),
-                    ("gitcloneurl", pkg.additional.git_clone_url),
-                    ("submitter", pkg.additional.submitter),
-                    (
-                        "confilcts",
-                        pkg.additional.confilcts.unwrap_or_else(|| String::new()),
-                    ),
-                    (
-                        "provides",
-                        pkg.additional.provides.unwrap_or_else(|| String::new()),
-                    ),
-                    (
-                        "keywords",
-                        pkg.additional.keywords.unwrap_or_else(|| String::new()),
-                    ),
-                    (
-                        "license",
-                        pkg.additional.license.unwrap_or_else(|| String::new()),
-                    ),
-                ],
-            )
-            .map_err(|e| anyhow!(e));
+        conn.hset_multiple(
+            format!("pkgs:{}", pkg.basic.name),
+            &[
+                ("popularity", pkg.basic.popularity.to_string()),
+                ("last_updated", pkg.basic.last_updated),
+                ("description", pkg.basic.description),
+                ("maintainer", pkg.basic.maintainer),
+                ("version", pkg.basic.version),
+                ("votes", pkg.basic.votes.to_string()),
+                ("path_to_additional_data", pkg.basic.path_to_additional_data),
+                ("firstsubmitted", pkg.additional.first_submitted),
+                ("gitcloneurl", pkg.additional.git_clone_url),
+                ("submitter", pkg.additional.submitter),
+                (
+                    "confilcts",
+                    pkg.additional.confilcts.unwrap_or_else(|| String::new()),
+                ),
+                (
+                    "provides",
+                    pkg.additional.provides.unwrap_or_else(|| String::new()),
+                ),
+                (
+                    "keywords",
+                    pkg.additional.keywords.unwrap_or_else(|| String::new()),
+                ),
+                (
+                    "license",
+                    pkg.additional.license.unwrap_or_else(|| String::new()),
+                ),
+            ],
+        )?;
 
         for (idx, comment) in pkg.comments.iter().enumerate() {
             conn.hset_multiple(
@@ -72,12 +70,15 @@ impl RedisIO {
         for dependency in pkg.dependencies {
             for dep in dependency.packages {
                 conn.rpush(
-                    format!("pkgs:{}:deps:{}:pkgs", pkg.basic.name, dependency.group),
+                    format!("pkgs:{}:deps:{}", pkg.basic.name, dependency.group),
                     dep,
                 )?;
             }
 
-            // TODO: Add a set of deps groups
+            conn.sadd(
+                format!("pkgs:{}:deps", pkg.basic.name),
+                format!("pkgs:{}:deps:{}", pkg.basic.name, dependency.group),
+            )?;
         }
 
         Ok(())
@@ -101,6 +102,18 @@ impl RedisIO {
         }
 
         pkg.comments = comments;
+
+        let group_list: Vec<String> = conn.smembers(format!("pkgs:{}:deps", pkg.basic.name))?;
+
+        let mut dependencies = vec![];
+
+        for group in group_list {
+            let packages: Vec<String> = conn.lrange(&group, 0, -1)?;
+
+            dependencies.push(PackageDependency { group, packages });
+        }
+
+        pkg.dependencies = dependencies;
 
         return Ok(pkg);
     }
@@ -190,5 +203,6 @@ mod test {
         // Assert
         assert_eq!(pkg.basic.name, "Test");
         assert!(pkg.comments.len() == 2);
+        assert!(pkg.dependencies.len() == 1);
     }
 }
