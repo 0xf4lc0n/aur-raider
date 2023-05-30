@@ -19,4 +19,5 @@ pub trait DatabasePackageIO {
     async fn health_check(&self) -> Result<()>;
     async fn insert(&self, pkg: &PackageData) -> Result<()>;
     async fn get(&self, name: &str) -> Result<PackageData>;
+    fn get_name(&self) -> &'static str;
 }

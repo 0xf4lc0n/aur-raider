@@ -157,6 +157,10 @@ impl DatabasePackageIO for SkytableIO {
             comments,
         })
     }
+
+    fn get_name(&self) -> &'static str {
+        "Skytable"
+    }
 }
 
 impl IntoSkyhashBytes for &BasicPackageData {

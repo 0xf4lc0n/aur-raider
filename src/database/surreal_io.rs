@@ -75,6 +75,10 @@ impl DatabasePackageIO for SurrealIO {
         let pkg: PackageData = self.db.select(("pkgs", name)).await?;
         Ok(pkg)
     }
+
+    fn get_name(&self) -> &'static str {
+        "Surreal"
+    }
 }
 
 #[cfg(test)]

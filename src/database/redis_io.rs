@@ -134,6 +134,10 @@ impl DatabasePackageIO for RedisIO {
 
         Ok(pkg)
     }
+
+    fn get_name(&self) -> &'static str {
+        "Redis"
+    }
 }
 
 #[cfg(test)]

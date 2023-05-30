@@ -9,6 +9,7 @@ mod serialization;
 use clap::Parser;
 use cli::{Cli, Commands, FromFsArgs, ToFsArgs};
 use database::{DatabasePackageIO, RedisIO, SkytableIO, SurrealIO};
+use models::{BasicPackageData, PackageData};
 use serialization::{read_binary_file_and_deserialize, save_to_binary_file, serialize_to_bson};
 use std::fs::File;
 use std::sync::Arc;
@@ -78,35 +79,49 @@ async fn load_from_file_system_to_databases(cfg: &FromFsArgs) {
 
     for i in pages_range {
         let file_path = format!("{}/page_{}.bson", cfg.path, i);
-        let packages = read_binary_file_and_deserialize(&file_path)
+        let mut packages = read_binary_file_and_deserialize(&file_path)
             .expect(&format!("Cannot read and deserialize file {}", file_path));
 
         let redis = RedisIO::try_new().expect("Cannot create RedisIO");
         let skytable = SkytableIO::try_new().expect("Cannot create SkytableIO");
         let surreal = SurrealIO::try_new().await.expect("Cannot create SurrealIO");
 
-        for pkg in packages {
-            if let Err(e) = redis.insert(&pkg).await {
-                error!(
-                    "Failed to insert {} to Redis database. Caused by: {}",
-                    &pkg.basic.name, e
-                );
-            }
+        for pkg in packages.iter_mut() {
+            add_package_to_database(&pkg, &redis).await;
+            add_package_to_database(&pkg, &skytable).await;
+            add_package_to_database(&pkg, &surreal).await;
 
-            if let Err(e) = skytable.insert(&pkg).await {
-                error!(
-                    "Failed to insert {} to Skytable database. Caused by: {}",
-                    &pkg.basic.name, e
-                );
-            }
+            add_package_duplicates_to_database(pkg, &redis, 5).await;
+            add_package_duplicates_to_database(pkg, &skytable, 5).await;
+            add_package_duplicates_to_database(pkg, &surreal, 5).await;
 
-            if let Err(e) = surreal.insert(&pkg).await {
-                error!(
-                    "Failed to insert {} to Surreal database. Caused by: {}",
-                    &pkg.basic.name, e
-                );
-            }
             info!("Loaded {} package to all databases", &pkg.basic.name);
         }
     }
+}
+
+async fn add_package_to_database(pkg: &PackageData, db: &impl DatabasePackageIO) {
+    if let Err(e) = db.insert(&pkg).await {
+        error!(
+            "Failed to insert {} to {} database. Caused by: {}",
+            &pkg.basic.name,
+            db.get_name(),
+            e
+        );
+    }
+}
+
+async fn add_package_duplicates_to_database(
+    pkg: &mut PackageData,
+    db: &impl DatabasePackageIO,
+    amount: usize,
+) {
+    let old_name = pkg.basic.name.clone();
+
+    for i in 1..=amount {
+        pkg.basic.name = format!("{}_{}", old_name, i);
+        add_package_to_database(pkg, db).await;
+    }
+
+    pkg.basic.name = old_name;
 }
