@@ -18,7 +18,7 @@ struct Record {
 
 type SurResult<T> = Result<T, surrealdb::Error>;
 
-struct SurrealIO {
+pub struct SurrealIO {
     db: Surreal<Client>,
 }
 

@@ -4,8 +4,14 @@ use async_trait::async_trait;
 use crate::models::PackageData;
 
 mod redis_io;
+pub use redis_io::RedisIO;
+
 mod skytable_io;
+pub use skytable_io::SkytableIO;
+
 mod surreal_io;
+pub use surreal_io::SurrealIO;
+
 mod shared;
 
 #[async_trait]

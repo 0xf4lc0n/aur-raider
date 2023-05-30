@@ -1,5 +1,5 @@
 use anyhow::Result;
-use bson::{doc, Bson};
+use bson::{doc, Bson, Document};
 use serde::Serialize;
 use tokio::{fs::File, io::AsyncWriteExt};
 
@@ -29,4 +29,12 @@ pub async fn save_to_binary_file(file_name: &str, bytes: &[u8]) -> Result<()> {
     file.write_all(bytes).await?;
     file.sync_all().await?;
     Ok(())
+}
+
+pub fn read_binary_file_and_deserialize(path: &str) -> Result<Vec<PackageData>> {
+    let file = std::fs::File::open(path)?;
+    let document = Document::from_reader(file)?;
+    let pkgs = document.get("packages").unwrap().to_owned();
+    let packages: Vec<PackageData> = bson::from_bson(pkgs)?;
+    Ok(packages)
 }

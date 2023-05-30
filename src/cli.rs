@@ -41,4 +41,12 @@ pub struct FromFsArgs {
     /// Path to directory where BSON are stored
     #[arg(long)]
     pub path: String,
+    /// Page number from which scraping will start (number is applied to bson file name
+    /// 'page_<number>.bson')
+    #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..))]
+    pub start_page: u32,
+    /// Page number to which scraping will process (number is applied to bson file name
+    /// 'page_<number>.bson')
+    #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
+    pub end_page: Option<u32>,
 }
