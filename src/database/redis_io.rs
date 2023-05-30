@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use anyhow::{anyhow, Result};
+use async_trait::async_trait;
 use redis::{self, Client, Commands, Connection};
 
 use crate::models::{Comment, PackageData, PackageDependency};
@@ -28,43 +29,45 @@ impl RedisIO {
     }
 }
 
+#[async_trait]
 impl DatabasePackageIO for RedisIO {
-    fn health_check(&self) -> Result<()> {
+    async fn health_check(&self) -> Result<()> {
         self.connect()?;
         Ok(())
     }
 
-    fn insert(&self, pkg: PackageData) -> Result<()> {
+    async fn insert(&self, pkg: &PackageData) -> Result<()> {
         let mut conn = self.connect()?;
 
         conn.hset_multiple(
             format!("pkgs:{}", pkg.basic.name),
             &[
-                ("popularity", pkg.basic.popularity.to_string()),
-                ("last_updated", pkg.basic.last_updated),
-                ("description", pkg.basic.description),
-                ("maintainer", pkg.basic.maintainer),
-                ("version", pkg.basic.version),
-                ("votes", pkg.basic.votes.to_string()),
-                ("path_to_additional_data", pkg.basic.path_to_additional_data),
-                ("firstsubmitted", pkg.additional.first_submitted),
-                ("gitcloneurl", pkg.additional.git_clone_url),
-                ("submitter", pkg.additional.submitter),
+                ("popularity", pkg.basic.popularity.to_string().as_str()),
+                ("last_updated", pkg.basic.last_updated.as_str()),
+                ("description", pkg.basic.description.as_str()),
+                ("maintainer", pkg.basic.maintainer.as_str()),
+                ("version", pkg.basic.version.as_str()),
+                ("votes", pkg.basic.votes.to_string().as_str()),
+                ("path_to_additional_data", pkg.basic.path_to_additional_data.as_str()),
+                ("firstsubmitted", pkg.additional.first_submitted.as_str()),
+                ("gitcloneurl", pkg.additional.git_clone_url.as_str()),
+                ("submitter", pkg.additional.submitter.as_str()),
                 (
                     "confilcts",
-                    pkg.additional.confilcts.unwrap_or_else(|| String::new()),
+                    pkg.additional.confilcts.as_ref().map(|s| s.as_str()).unwrap_or(""),
                 ),
                 (
                     "provides",
-                    pkg.additional.provides.unwrap_or_else(|| String::new()),
+                    pkg.additional.provides.as_ref().map(|s| s.as_str()).unwrap_or(""),
+
                 ),
                 (
                     "keywords",
-                    pkg.additional.keywords.unwrap_or_else(|| String::new()),
+                    pkg.additional.keywords.as_ref().map(|s| s.as_str()).unwrap_or(""),
                 ),
                 (
                     "license",
-                    pkg.additional.license.unwrap_or_else(|| String::new()),
+                    pkg.additional.license.as_ref().map(|s| s.as_str()).unwrap_or(""),
                 ),
             ],
         )?;
@@ -81,8 +84,8 @@ impl DatabasePackageIO for RedisIO {
             )?;
         }
 
-        for dependency in pkg.dependencies {
-            for dep in dependency.packages {
+        for dependency in &pkg.dependencies {
+            for dep in &dependency.packages {
                 conn.rpush(
                     format!("pkgs:{}:deps:{}", pkg.basic.name, dependency.group),
                     dep,
@@ -98,7 +101,7 @@ impl DatabasePackageIO for RedisIO {
         Ok(())
     }
 
-    fn get(&self, name: &str) -> Result<PackageData> {
+    async fn get(&self, name: &str) -> Result<PackageData> {
         let mut conn = self.connect()?;
 
         let mut pkg_dict: HashMap<String, String> = conn.hgetall(format!("pkgs:{}", name))?;
@@ -135,11 +138,12 @@ impl DatabasePackageIO for RedisIO {
 
 #[cfg(test)]
 mod test {
-    use crate::{models::{
-        AdditionalPackageData, BasicPackageData, Comment, PackageData, PackageDependency,
-    }, database::DatabasePackageIO};
-
     use super::RedisIO;
+    use crate::database::{
+        shared::{assert_pkg, create_package_data},
+        DatabasePackageIO,
+    };
+    use anyhow::Result;
 
     #[test]
     fn success_init_when_database_is_up() {
@@ -162,55 +166,20 @@ mod test {
         assert_eq!(con.is_ok(), true);
     }
 
-    #[test]
-    fn insert_data() {
+    #[tokio::test]
+    async fn insert_data() -> Result<()> {
         // Arrange
-        let redis = RedisIO::try_new().unwrap();
-        let pkg = PackageData {
-            basic: BasicPackageData {
-                name: "Test".into(),
-                votes: 100,
-                version: "1.2".into(),
-                popularity: 6.2,
-                maintainer: "Tester".into(),
-                description: "Sample description".into(),
-                last_updated: "2012".into(),
-                path_to_additional_data: "/test".into(),
-            },
-            additional: AdditionalPackageData {
-                license: None,
-                keywords: None,
-                provides: None,
-                confilcts: None,
-                submitter: "Tester".into(),
-                git_clone_url: "some git url".into(),
-                first_submitted: "2011".into(),
-            },
-            comments: vec![
-                Comment {
-                    header: "Someone wrote at 14:15".into(),
-                    content: "Cool package".into(),
-                },
-                Comment {
-                    header: "Foo wrote at 20:30".into(),
-                    content: "Not bad".into(),
-                },
-            ],
-
-            dependencies: vec![PackageDependency {
-                group: "abc".into(),
-                packages: vec!["aaa".into(), "bbb".into(), "ccc".into()],
-            }],
-        };
+        let redis = RedisIO::try_new()?;
+        let generated_pkg = create_package_data();
 
         // Act
-        redis.flushdb().unwrap();
-        redis.insert(pkg).unwrap();
-        let pkg = redis.get("Test").unwrap();
+        redis.flushdb()?;
+        redis.insert(&generated_pkg).await?;
+        let retreived_pkg = redis.get("Test").await?;
 
         // Assert
-        assert_eq!(pkg.basic.name, "Test");
-        assert!(pkg.comments.len() == 2);
-        assert!(pkg.dependencies.len() == 1);
+        assert_pkg(&retreived_pkg, &generated_pkg);
+
+        Ok(())
     }
 }

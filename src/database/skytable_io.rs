@@ -1,4 +1,5 @@
 use anyhow::Result;
+use async_trait::async_trait;
 use skytable::{
     actions::Actions,
     ddl::{Ddl, Keymap, KeymapType},
@@ -81,23 +82,24 @@ fn check_err<T>(res: SkyResult<T>) -> Result<()> {
     Ok(())
 }
 
+#[async_trait]
 impl DatabasePackageIO for SkytableIO {
-    fn health_check(&self) -> Result<()> {
+    async fn health_check(&self) -> Result<()> {
         self.pool.get()?;
         Ok(())
     }
 
-    fn insert(&self, pkg: PackageData) -> Result<()> {
+    async fn insert(&self, pkg: &PackageData) -> Result<()> {
         let mut conn = self.pool.get()?;
         let pkg_name = pkg.basic.name.clone();
 
         let (basic, additional, comments, deps) = self.create_tables(&pkg_name)?;
 
         conn.switch(basic)?;
-        conn.set(&pkg_name, pkg.basic)?;
+        conn.set(&pkg_name, &pkg.basic)?;
 
         conn.switch(additional)?;
-        conn.set(&pkg_name, pkg.additional)?;
+        conn.set(&pkg_name, &pkg.additional)?;
 
         conn.switch(comments)?;
         for (idx, comment) in pkg.comments.iter().enumerate() {
@@ -114,7 +116,7 @@ impl DatabasePackageIO for SkytableIO {
         Ok(())
     }
 
-    fn get(&self, name: &str) -> Result<crate::models::PackageData> {
+    async fn get(&self, name: &str) -> Result<crate::models::PackageData> {
         let mut conn = self.pool.get()?;
 
         let basic_table = format!("{}:{}", name, BASIC_PKGS_TABLE);
@@ -157,7 +159,7 @@ impl DatabasePackageIO for SkytableIO {
     }
 }
 
-impl IntoSkyhashBytes for BasicPackageData {
+impl IntoSkyhashBytes for &BasicPackageData {
     fn as_bytes(&self) -> Vec<u8> {
         serde_json::to_vec(self).expect("Cannot serialize PackageData to Vec<u8>")
     }
@@ -171,7 +173,7 @@ impl FromSkyhashBytes for BasicPackageData {
     }
 }
 
-impl IntoSkyhashBytes for AdditionalPackageData {
+impl IntoSkyhashBytes for &AdditionalPackageData {
     fn as_bytes(&self) -> Vec<u8> {
         serde_json::to_vec(self).expect("Cannot serialize AdditionalPackageData to Vec<u8>")
     }
@@ -215,35 +217,40 @@ impl FromSkyhashBytes for PackageDependency {
 
 #[cfg(test)]
 mod test {
-    use crate::database::{dummy::create_package_data, DatabasePackageIO};
-
     use super::SkytableIO;
+    use crate::database::{
+        shared::{assert_pkg, create_package_data},
+        DatabasePackageIO,
+    };
+    use anyhow::Result;
 
     #[test]
-    fn skytable_success_init_when_database_is_up() {
-        SkytableIO::try_new().unwrap();
+    fn skytable_success_init_when_database_is_up() -> Result<()> {
+        SkytableIO::try_new()?;
+        Ok(())
     }
 
     #[test]
-    fn skytable_success_connect_when_database_is_up() {
-        let sky = SkytableIO::try_new().unwrap();
-        sky.pool.get().unwrap();
+    fn skytable_success_connect_when_database_is_up() -> Result<()> {
+        let sky = SkytableIO::try_new()?;
+        sky.pool.get()?;
+        Ok(())
     }
 
-    #[test]
-    fn insert_data() {
+    #[tokio::test]
+    async fn insert_data() -> Result<()> {
         // Arrange
-        let skytable = SkytableIO::try_new().unwrap();
-        let pkg = create_package_data();
+        let skytable = SkytableIO::try_new()?;
+        let generated_pkg = create_package_data();
 
         // Act
-        skytable.flushdb().unwrap();
-        skytable.insert(pkg).unwrap();
-        let pkg = skytable.get("Test").unwrap();
+        skytable.flushdb()?;
+        skytable.insert(&generated_pkg).await?;
+        let retreived_pkg = skytable.get("Test").await?;
 
         // Assert
-        assert_eq!(pkg.basic.name, "Test");
-        assert!(pkg.comments.len() == 2);
-        assert!(pkg.dependencies.len() == 1);
+        assert_pkg(&retreived_pkg, &generated_pkg);
+
+        Ok(())
     }
 }
