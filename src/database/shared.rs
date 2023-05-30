@@ -40,3 +40,12 @@ pub fn create_package_data() -> PackageData {
         }],
     }
 }
+
+pub fn assert_pkg(retreived_pkg: &PackageData, generated_pkg: &PackageData) {
+        assert_eq!(retreived_pkg.basic.name, generated_pkg.basic.name);
+        assert_eq!(retreived_pkg.comments.len(), generated_pkg.comments.len());
+        assert_eq!(
+            retreived_pkg.dependencies.len(),
+            generated_pkg.dependencies.len()
+        );
+}
