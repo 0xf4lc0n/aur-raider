@@ -106,6 +106,7 @@ async fn load_from_file_system_to_databases(cfg: &FromFsArgs) {
                     &pkg.basic.name, e
                 );
             }
+            info!("Loaded {} package to all databases", &pkg.basic.name);
         }
     }
 }
