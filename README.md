@@ -57,3 +57,11 @@ let-env RUST_LOG = 'aur_raider=info'
 All errors are additionaly dumped into logs directory as plaintext files.
 
 To manupilate log level on stdout use RUST_LOG environment variable (default log level is set to ERROR so you may want to change it).
+
+## Using as lib
+
+To use this package as library invoke the following cargo command:
+
+```bash
+cargo add aur-raider --git https://github.com/0xf4lc0n/aur-raider --no-default-features --features models
+```
