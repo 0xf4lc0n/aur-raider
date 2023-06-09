@@ -36,14 +36,14 @@ impl SkytableIO {
         Ok(())
     }
 
-    fn create_tables(&self, pkg_name: &str) -> Result<(String, String, String, String)> {
+    fn create_tables(&self, keyspace: &str) -> Result<(String, String, String, String)> {
         let mut conn = self.pool.get()?;
-        check_err(conn.create_keyspace(pkg_name))?;
+        check_err(conn.create_keyspace(keyspace))?;
 
-        let basic_table = format!("{}:{}", pkg_name, BASIC_PKGS_TABLE);
-        let advanced_table = format!("{}:{}", pkg_name, ADDITIONAL_PKGS_TABLE);
-        let comments_table = format!("{}:{}", pkg_name, COMMENTS_TABLE);
-        let deps_table = format!("{}:{}", pkg_name, DEPENDENCIES_TABLE);
+        let basic_table = format!("{}:{}", keyspace, BASIC_PKGS_TABLE);
+        let advanced_table = format!("{}:{}", keyspace, ADDITIONAL_PKGS_TABLE);
+        let comments_table = format!("{}:{}", keyspace, COMMENTS_TABLE);
+        let deps_table = format!("{}:{}", keyspace, DEPENDENCIES_TABLE);
 
         let pkgs_table = Keymap::new(&basic_table)
             .set_ktype(KeymapType::Str)
@@ -93,7 +93,8 @@ impl DatabasePackageIO for SkytableIO {
         let mut conn = self.pool.get()?;
         let pkg_name = pkg.basic.name.clone();
 
-        let (basic, additional, comments, deps) = self.create_tables(&pkg_name)?;
+        //TODO: create only once
+        let (basic, additional, comments, deps) = self.create_tables("pkgs")?;
 
         conn.switch(basic)?;
         conn.set(&pkg_name, &pkg.basic)?;

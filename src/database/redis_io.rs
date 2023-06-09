@@ -72,6 +72,8 @@ impl DatabasePackageIO for RedisIO {
             ],
         )?;
 
+        conn.sadd("pkgs_set", &pkg.basic.name)?;
+
         for (idx, comment) in pkg.comments.iter().enumerate() {
             conn.hset_multiple(
                 format!("pkgs:{}:cmnts:{}", pkg.basic.name, idx + 1),
