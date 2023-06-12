@@ -1,5 +1,6 @@
 use anyhow::Result;
 use async_trait::async_trait;
+use serde::{Serialize, Deserialize};
 use skytable::{
     actions::Actions,
     ddl::{Ddl, Keymap, KeymapType},
@@ -19,6 +20,16 @@ use crate::models::{
 };
 
 use super::DatabasePackageIO;
+
+#[derive(Debug, Serialize, Deserialize)]
+struct Comments {
+    data: Vec<Comment>
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct Dependencies {
+    data: Vec<PackageDependency>
+}
 
 pub struct SkytableIO {
     pool: Pool,
@@ -100,8 +111,7 @@ impl DatabasePackageIO for SkytableIO {
         conn.run_query_raw(Query::new().arg("LMOD").arg(&pkg.basic.name).arg("CLEAR"))?;
 
         for comment in &pkg.comments {
-            let serialized_data = serde_json::to_string(&comment)?;
-            let query = Query::new().arg("LMOD").arg(&pkg.basic.name).arg("PUSH").arg(serialized_data);
+            let query = Query::new().arg("LMOD").arg(&pkg.basic.name).arg("PUSH").arg(comment);
             conn.run_query_raw(query)?;
         }
 
@@ -110,8 +120,7 @@ impl DatabasePackageIO for SkytableIO {
         conn.run_query_raw(Query::new().arg("LMOD").arg(&pkg.basic.name).arg("CLEAR"))?;
 
         for dependency in &pkg.dependencies {
-            let serialized_data = serde_json::to_string(&dependency)?;
-            let query = Query::new().arg("LMOD").arg(&pkg.basic.name).arg("PUSH").arg(serialized_data);
+            let query = Query::new().arg("LMOD").arg(&pkg.basic.name).arg("PUSH").arg(dependency);
             conn.run_query_raw(query)?;
         }
    
@@ -128,30 +137,16 @@ impl DatabasePackageIO for SkytableIO {
         let additional: AdditionalPackageData = conn.get(name)?;
 
         conn.switch(COMMENTS_TABLE)?;
-        let comments_bytes: Vec<Vec<u8>> = conn.run_query(Query::new().arg("LGET").arg(name))?;
-        
-        let mut comments: Vec<Comment> = Vec::new();
-        for comment_bytes in &comments_bytes {
-            let comment: Comment = serde_json::from_slice(comment_bytes)
-                .map_err(|e| skytable::error::Error::ParseError(e.to_string()))?;
-            comments.push(comment);
-        }
+        let comments: Comments = conn.run_query(Query::new().arg("LGET").arg(name))?;
 
         conn.switch(DEPENDENCIES_TABLE)?;
-        let dependencies_bytes: Vec<Vec<u8>> = conn.run_query(Query::new().arg("LGET").arg(name))?;
-        
-        let mut dependencies: Vec<PackageDependency> = Vec::new();
-        for dependency_bytes in &dependencies_bytes {
-            let dependency: PackageDependency = serde_json::from_slice(dependency_bytes)
-                .map_err(|e| skytable::error::Error::ParseError(e.to_string()))?;
-            dependencies.push(dependency);
-        }
+        let dependencies: Dependencies = conn.run_query(Query::new().arg("LGET").arg(name))?;
 
         Ok(PackageData {
             basic,
             additional,
-            comments,
-            dependencies,
+            comments: comments.data,
+            dependencies: dependencies.data,
         })
     }
 }
@@ -195,6 +190,32 @@ impl FromSkyhashBytes for Comment {
         let bytes: Vec<u8> = element.try_element_into()?;
         serde_json::from_slice(&bytes)
             .map_err(|e| skytable::error::Error::ParseError(e.to_string()))
+    }
+}
+
+impl FromSkyhashBytes for Comments {
+    fn from_element(element: skytable::Element) -> SkyResult<Self> {
+        let mut comments: Vec<Comment> = Vec::new();
+        let comments_bytes: Vec<Vec<u8>> = element.try_element_into()?;
+        for comment_bytes in &comments_bytes {
+            let comment: Comment = serde_json::from_slice(comment_bytes)
+                .map_err(|e| skytable::error::Error::ParseError(e.to_string()))?;
+            comments.push(comment);
+        }
+        Ok(Comments { data: comments })
+    }
+}
+
+impl FromSkyhashBytes for Dependencies {
+    fn from_element(element: skytable::Element) -> SkyResult<Self> {
+        let dependencies_bytes: Vec<Vec<u8>> = element.try_element_into()?;
+        let mut dependencies: Vec<PackageDependency> = Vec::new();
+        for dependency_bytes in dependencies_bytes {
+            let dependency: PackageDependency = serde_json::from_slice(&dependency_bytes)
+                .map_err(|e| skytable::error::Error::ParseError(e.to_string()))?;
+            dependencies.push(dependency);
+        }
+        Ok(Dependencies { data: dependencies })
     }
 }
 
