@@ -1,23 +1,35 @@
 use anyhow::Result;
 use async_trait::async_trait;
+use serde::{Serialize, Deserialize};
 use skytable::{
     actions::Actions,
     ddl::{Ddl, Keymap, KeymapType},
     pool::{self, Pool},
     types::{FromSkyhashBytes, IntoSkyhashBytes},
-    SkyResult,
+    SkyResult, Query,
 };
 
-const BASIC_PKGS_TABLE: &str = "basic";
-const ADDITIONAL_PKGS_TABLE: &str = "additional";
-const COMMENTS_TABLE: &str = "comments";
-const DEPENDENCIES_TABLE: &str = "dependencies";
+const KEYSPACE: &str = "pkgs";
+const BASIC_PKGS_TABLE: &str = "pkgs:basic";
+const ADDITIONAL_PKGS_TABLE: &str = "pkgs:additional";
+const COMMENTS_TABLE: &str = "pkgs:comments";
+const DEPENDENCIES_TABLE: &str = "pkgs:dependencies";
 
 use crate::models::{
     AdditionalPackageData, BasicPackageData, Comment, PackageData, PackageDependency,
 };
 
 use super::DatabasePackageIO;
+
+#[derive(Debug, Serialize, Deserialize)]
+struct Comments {
+    data: Vec<Comment>
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct Dependencies {
+    data: Vec<PackageDependency>
+}
 
 pub struct SkytableIO {
     pool: Pool,
@@ -26,8 +38,37 @@ pub struct SkytableIO {
 impl SkytableIO {
     pub fn try_new() -> Result<Self> {
         let pool = pool::get("127.0.0.1", 2003, 16)?;
-
         Ok(Self { pool })
+    }
+
+    pub fn create_tables(&self) -> Result<()> {
+        let mut conn = self.pool.get()?;
+        check_err(conn.create_keyspace(KEYSPACE))?;
+
+        let pkgs_table = Keymap::new(BASIC_PKGS_TABLE)
+            .set_ktype(KeymapType::Str)
+            .set_vtype(KeymapType::Binstr);
+
+        check_err(conn.create_table(pkgs_table))?;
+
+        let pkgs_table = Keymap::new(ADDITIONAL_PKGS_TABLE)
+            .set_ktype(KeymapType::Str)
+            .set_vtype(KeymapType::Binstr);
+
+        check_err(conn.create_table(pkgs_table))?;
+
+        let pkgs_table = Keymap::new(COMMENTS_TABLE)
+            .set_ktype(KeymapType::Str)
+            .set_vtype(KeymapType::Other("list<binstr>".to_owned()));
+
+        check_err(conn.create_table(pkgs_table))?;
+
+        let pkgs_table = Keymap::new(DEPENDENCIES_TABLE)
+        .set_ktype(KeymapType::Str)
+        .set_vtype(KeymapType::Other("list<binstr>".to_owned()));
+
+        check_err(conn.create_table(pkgs_table))?;
+        Ok(())
     }
 
     fn flushdb(&self) -> Result<()> {
@@ -36,40 +77,6 @@ impl SkytableIO {
         Ok(())
     }
 
-    fn create_tables(&self, pkg_name: &str) -> Result<(String, String, String, String)> {
-        let mut conn = self.pool.get()?;
-        check_err(conn.create_keyspace(pkg_name))?;
-
-        let basic_table = format!("{}:{}", pkg_name, BASIC_PKGS_TABLE);
-        let advanced_table = format!("{}:{}", pkg_name, ADDITIONAL_PKGS_TABLE);
-        let comments_table = format!("{}:{}", pkg_name, COMMENTS_TABLE);
-        let deps_table = format!("{}:{}", pkg_name, DEPENDENCIES_TABLE);
-
-        let pkgs_table = Keymap::new(&basic_table)
-            .set_ktype(KeymapType::Str)
-            .set_vtype(KeymapType::Binstr);
-
-        check_err(conn.create_table(pkgs_table))?;
-
-        let pkgs_table = Keymap::new(&advanced_table)
-            .set_ktype(KeymapType::Str)
-            .set_vtype(KeymapType::Binstr);
-
-        check_err(conn.create_table(pkgs_table))?;
-
-        let pkgs_table = Keymap::new(&comments_table)
-            .set_ktype(KeymapType::Str)
-            .set_vtype(KeymapType::Binstr);
-
-        check_err(conn.create_table(pkgs_table))?;
-
-        let pkgs_table = Keymap::new(&deps_table)
-            .set_ktype(KeymapType::Str)
-            .set_vtype(KeymapType::Binstr);
-
-        check_err(conn.create_table(pkgs_table))?;
-        Ok((basic_table, advanced_table, comments_table, deps_table))
-    }
 }
 
 fn check_err<T>(res: SkyResult<T>) -> Result<()> {
@@ -93,68 +100,53 @@ impl DatabasePackageIO for SkytableIO {
         let mut conn = self.pool.get()?;
         let pkg_name = pkg.basic.name.clone();
 
-        let (basic, additional, comments, deps) = self.create_tables(&pkg_name)?;
-
-        conn.switch(basic)?;
+        conn.switch(BASIC_PKGS_TABLE)?;
         conn.set(&pkg_name, &pkg.basic)?;
 
-        conn.switch(additional)?;
+        conn.switch(ADDITIONAL_PKGS_TABLE)?;
         conn.set(&pkg_name, &pkg.additional)?;
 
-        conn.switch(comments)?;
-        for (idx, comment) in pkg.comments.iter().enumerate() {
-            let name = (idx + 1).to_string();
-            conn.set(name, comment)?;
+        conn.switch(COMMENTS_TABLE)?;
+        conn.run_query_raw(Query::new().arg("LSET").arg(&pkg.basic.name))?;
+        conn.run_query_raw(Query::new().arg("LMOD").arg(&pkg.basic.name).arg("CLEAR"))?;
+
+        for comment in &pkg.comments {
+            let query = Query::new().arg("LMOD").arg(&pkg.basic.name).arg("PUSH").arg(comment);
+            conn.run_query_raw(query)?;
         }
 
-        conn.switch(deps)?;
-        for (idx, dep) in pkg.dependencies.iter().enumerate() {
-            let name = (idx + 1).to_string();
-            conn.set(name, dep)?;
-        }
+        conn.switch(DEPENDENCIES_TABLE)?;
+        conn.run_query_raw(Query::new().arg("LSET").arg(&pkg.basic.name))?;
+        conn.run_query_raw(Query::new().arg("LMOD").arg(&pkg.basic.name).arg("CLEAR"))?;
 
+        for dependency in &pkg.dependencies {
+            let query = Query::new().arg("LMOD").arg(&pkg.basic.name).arg("PUSH").arg(dependency);
+            conn.run_query_raw(query)?;
+        }
+   
         Ok(())
     }
 
     async fn get(&self, name: &str) -> Result<crate::models::PackageData> {
         let mut conn = self.pool.get()?;
 
-        let basic_table = format!("{}:{}", name, BASIC_PKGS_TABLE);
-        let advanced_table = format!("{}:{}", name, ADDITIONAL_PKGS_TABLE);
-        let comments_table = format!("{}:{}", name, COMMENTS_TABLE);
-        let deps_table = format!("{}:{}", name, DEPENDENCIES_TABLE);
-
-        conn.switch(basic_table)?;
+        conn.switch(BASIC_PKGS_TABLE)?;
         let basic: BasicPackageData = conn.get(name)?;
 
-        conn.switch(advanced_table)?;
+        conn.switch(ADDITIONAL_PKGS_TABLE)?;
         let additional: AdditionalPackageData = conn.get(name)?;
 
-        conn.switch(comments_table)?;
-        let comment_keys: Vec<String> = conn.lskeys(1_000_000 as u64)?;
+        conn.switch(COMMENTS_TABLE)?;
+        let comments: Comments = conn.run_query(Query::new().arg("LGET").arg(name))?;
 
-        let mut comments = vec![];
-
-        for key in comment_keys {
-            let cmnt: Comment = conn.get(key)?;
-            comments.push(cmnt);
-        }
-
-        conn.switch(deps_table)?;
-        let dep_keys: Vec<String> = conn.lskeys(1_000_000 as u64)?;
-
-        let mut dependencies = vec![];
-
-        for key in dep_keys {
-            let dep: PackageDependency = conn.get(key)?;
-            dependencies.push(dep);
-        }
+        conn.switch(DEPENDENCIES_TABLE)?;
+        let dependencies: Dependencies = conn.run_query(Query::new().arg("LGET").arg(name))?;
 
         Ok(PackageData {
             basic,
             additional,
-            dependencies,
-            comments,
+            comments: comments.data,
+            dependencies: dependencies.data,
         })
     }
 }
@@ -198,6 +190,32 @@ impl FromSkyhashBytes for Comment {
         let bytes: Vec<u8> = element.try_element_into()?;
         serde_json::from_slice(&bytes)
             .map_err(|e| skytable::error::Error::ParseError(e.to_string()))
+    }
+}
+
+impl FromSkyhashBytes for Comments {
+    fn from_element(element: skytable::Element) -> SkyResult<Self> {
+        let mut comments: Vec<Comment> = Vec::new();
+        let comments_bytes: Vec<Vec<u8>> = element.try_element_into()?;
+        for comment_bytes in &comments_bytes {
+            let comment: Comment = serde_json::from_slice(comment_bytes)
+                .map_err(|e| skytable::error::Error::ParseError(e.to_string()))?;
+            comments.push(comment);
+        }
+        Ok(Comments { data: comments })
+    }
+}
+
+impl FromSkyhashBytes for Dependencies {
+    fn from_element(element: skytable::Element) -> SkyResult<Self> {
+        let dependencies_bytes: Vec<Vec<u8>> = element.try_element_into()?;
+        let mut dependencies: Vec<PackageDependency> = Vec::new();
+        for dependency_bytes in dependencies_bytes {
+            let dependency: PackageDependency = serde_json::from_slice(&dependency_bytes)
+                .map_err(|e| skytable::error::Error::ParseError(e.to_string()))?;
+            dependencies.push(dependency);
+        }
+        Ok(Dependencies { data: dependencies })
     }
 }
 
@@ -245,6 +263,7 @@ mod test {
 
         // Act
         skytable.flushdb()?;
+        skytable.create_tables()?;
         skytable.insert(&generated_pkg).await?;
         let retreived_pkg = skytable.get("Test").await?;
 
