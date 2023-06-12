@@ -13,7 +13,7 @@ use serialization::{read_binary_file_and_deserialize, save_to_binary_file, seria
 use std::fs::File;
 use std::sync::Arc;
 use tokio::time::Instant;
-use tracing::{debug, error, info, Level};
+use tracing::{error, info, Level};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 use crate::scrap::{get_page_and_scrap_packages, AurScraper, AUR_BASE_URL, AUR_PAGE_QUERY};
@@ -82,8 +82,9 @@ async fn load_from_file_system_to_databases(cfg: &FromFsArgs) {
             .expect(&format!("Cannot read and deserialize file {}", file_path));
 
         let redis = RedisIO::try_new().expect("Cannot create RedisIO");
-        let skytable = SkytableIO::try_new().expect("Cannot create SkytableIO");
         let surreal = SurrealIO::try_new().await.expect("Cannot create SurrealIO");
+        let skytable = SkytableIO::try_new().expect("Cannot create SkytableIO");
+        skytable.create_tables().expect("Cannot create tables in Skytable");
 
         for pkg in packages {
             if let Err(e) = redis.insert(&pkg).await {

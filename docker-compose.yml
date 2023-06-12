@@ -15,11 +15,12 @@ services:
     container_name: red
     volumes:
       - ./volumes/redis:/data
+
   surreal-db:
     image: surrealdb/surrealdb:latest
     ports:
       - 8000:8000
-    command: start --user root --pass root
+    command: start --user root --pass root file:/data/database.db
     container_name: sur
     volumes:
-      - ./volumes/surreal:/mydata
+      - ./volumes/surreal:/data

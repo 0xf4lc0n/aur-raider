@@ -8,10 +8,11 @@ use skytable::{
     SkyResult,
 };
 
-const BASIC_PKGS_TABLE: &str = "basic";
-const ADDITIONAL_PKGS_TABLE: &str = "additional";
-const COMMENTS_TABLE: &str = "comments";
-const DEPENDENCIES_TABLE: &str = "dependencies";
+const KEYSPACE: &str = "pkgs";
+const BASIC_PKGS_TABLE: &str = "pkgs:basic";
+const ADDITIONAL_PKGS_TABLE: &str = "pkgs:additional";
+const COMMENTS_TABLE: &str = "pkgs:comments";
+const DEPENDENCIES_TABLE: &str = "pkgs:dependencies";
 
 use crate::models::{
     AdditionalPackageData, BasicPackageData, Comment, PackageData, PackageDependency,
@@ -26,49 +27,43 @@ pub struct SkytableIO {
 impl SkytableIO {
     pub fn try_new() -> Result<Self> {
         let pool = pool::get("127.0.0.1", 2003, 16)?;
-
         Ok(Self { pool })
+    }
+
+    pub fn create_tables(&self) -> Result<()> {
+        let mut conn = self.pool.get()?;
+        check_err(conn.create_keyspace(KEYSPACE))?;
+
+        let pkgs_table = Keymap::new(BASIC_PKGS_TABLE)
+            .set_ktype(KeymapType::Str)
+            .set_vtype(KeymapType::Binstr);
+
+        check_err(conn.create_table(pkgs_table))?;
+
+        let pkgs_table = Keymap::new(ADDITIONAL_PKGS_TABLE)
+            .set_ktype(KeymapType::Str)
+            .set_vtype(KeymapType::Binstr);
+
+        check_err(conn.create_table(pkgs_table))?;
+
+        let pkgs_table = Keymap::new(COMMENTS_TABLE)
+            .set_ktype(KeymapType::Str)
+            .set_vtype(KeymapType::Binstr);
+
+        check_err(conn.create_table(pkgs_table))?;
+
+        let pkgs_table = Keymap::new(DEPENDENCIES_TABLE)
+            .set_ktype(KeymapType::Str)
+            .set_vtype(KeymapType::Binstr);
+
+        check_err(conn.create_table(pkgs_table))?;
+        Ok(())
     }
 
     fn flushdb(&self) -> Result<()> {
         let mut conn = self.pool.get()?;
         conn.flushdb()?;
         Ok(())
-    }
-
-    fn create_tables(&self, keyspace: &str) -> Result<(String, String, String, String)> {
-        let mut conn = self.pool.get()?;
-        check_err(conn.create_keyspace(keyspace))?;
-
-        let basic_table = format!("{}:{}", keyspace, BASIC_PKGS_TABLE);
-        let advanced_table = format!("{}:{}", keyspace, ADDITIONAL_PKGS_TABLE);
-        let comments_table = format!("{}:{}", keyspace, COMMENTS_TABLE);
-        let deps_table = format!("{}:{}", keyspace, DEPENDENCIES_TABLE);
-
-        let pkgs_table = Keymap::new(&basic_table)
-            .set_ktype(KeymapType::Str)
-            .set_vtype(KeymapType::Binstr);
-
-        check_err(conn.create_table(pkgs_table))?;
-
-        let pkgs_table = Keymap::new(&advanced_table)
-            .set_ktype(KeymapType::Str)
-            .set_vtype(KeymapType::Binstr);
-
-        check_err(conn.create_table(pkgs_table))?;
-
-        let pkgs_table = Keymap::new(&comments_table)
-            .set_ktype(KeymapType::Str)
-            .set_vtype(KeymapType::Binstr);
-
-        check_err(conn.create_table(pkgs_table))?;
-
-        let pkgs_table = Keymap::new(&deps_table)
-            .set_ktype(KeymapType::Str)
-            .set_vtype(KeymapType::Binstr);
-
-        check_err(conn.create_table(pkgs_table))?;
-        Ok((basic_table, advanced_table, comments_table, deps_table))
     }
 }
 
@@ -93,22 +88,19 @@ impl DatabasePackageIO for SkytableIO {
         let mut conn = self.pool.get()?;
         let pkg_name = pkg.basic.name.clone();
 
-        //TODO: create only once
-        let (basic, additional, comments, deps) = self.create_tables("pkgs")?;
-
-        conn.switch(basic)?;
+        conn.switch(BASIC_PKGS_TABLE)?;
         conn.set(&pkg_name, &pkg.basic)?;
 
-        conn.switch(additional)?;
+        conn.switch(ADDITIONAL_PKGS_TABLE)?;
         conn.set(&pkg_name, &pkg.additional)?;
 
-        conn.switch(comments)?;
+        conn.switch(COMMENTS_TABLE)?;
         for (idx, comment) in pkg.comments.iter().enumerate() {
             let name = (idx + 1).to_string();
             conn.set(name, comment)?;
         }
 
-        conn.switch(deps)?;
+        conn.switch(DEPENDENCIES_TABLE)?;
         for (idx, dep) in pkg.dependencies.iter().enumerate() {
             let name = (idx + 1).to_string();
             conn.set(name, dep)?;
