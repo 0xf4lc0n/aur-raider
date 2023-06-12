@@ -5,7 +5,7 @@ use skytable::{
     ddl::{Ddl, Keymap, KeymapType},
     pool::{self, Pool},
     types::{FromSkyhashBytes, IntoSkyhashBytes},
-    SkyResult,
+    SkyResult, Query,
 };
 
 const KEYSPACE: &str = "pkgs";
@@ -48,13 +48,13 @@ impl SkytableIO {
 
         let pkgs_table = Keymap::new(COMMENTS_TABLE)
             .set_ktype(KeymapType::Str)
-            .set_vtype(KeymapType::Binstr);
+            .set_vtype(KeymapType::Other("list<binstr>".to_owned()));
 
         check_err(conn.create_table(pkgs_table))?;
 
         let pkgs_table = Keymap::new(DEPENDENCIES_TABLE)
-            .set_ktype(KeymapType::Str)
-            .set_vtype(KeymapType::Binstr);
+        .set_ktype(KeymapType::Str)
+        .set_vtype(KeymapType::Other("list<binstr>".to_owned()));
 
         check_err(conn.create_table(pkgs_table))?;
         Ok(())
@@ -65,6 +65,7 @@ impl SkytableIO {
         conn.flushdb()?;
         Ok(())
     }
+
 }
 
 fn check_err<T>(res: SkyResult<T>) -> Result<()> {
@@ -95,17 +96,25 @@ impl DatabasePackageIO for SkytableIO {
         conn.set(&pkg_name, &pkg.additional)?;
 
         conn.switch(COMMENTS_TABLE)?;
-        for (idx, comment) in pkg.comments.iter().enumerate() {
-            let name = (idx + 1).to_string();
-            conn.set(name, comment)?;
+        conn.run_query_raw(Query::new().arg("LSET").arg(&pkg.basic.name))?;
+        conn.run_query_raw(Query::new().arg("LMOD").arg(&pkg.basic.name).arg("CLEAR"))?;
+
+        for comment in &pkg.comments {
+            let serialized_data = serde_json::to_string(&comment)?;
+            let query = Query::new().arg("LMOD").arg(&pkg.basic.name).arg("PUSH").arg(serialized_data);
+            conn.run_query_raw(query)?;
         }
 
         conn.switch(DEPENDENCIES_TABLE)?;
-        for (idx, dep) in pkg.dependencies.iter().enumerate() {
-            let name = (idx + 1).to_string();
-            conn.set(name, dep)?;
-        }
+        conn.run_query_raw(Query::new().arg("LSET").arg(&pkg.basic.name))?;
+        conn.run_query_raw(Query::new().arg("LMOD").arg(&pkg.basic.name).arg("CLEAR"))?;
 
+        for dependency in &pkg.dependencies {
+            let serialized_data = serde_json::to_string(&dependency)?;
+            let query = Query::new().arg("LMOD").arg(&pkg.basic.name).arg("PUSH").arg(serialized_data);
+            conn.run_query_raw(query)?;
+        }
+   
         Ok(())
     }
 
@@ -119,30 +128,30 @@ impl DatabasePackageIO for SkytableIO {
         let additional: AdditionalPackageData = conn.get(name)?;
 
         conn.switch(COMMENTS_TABLE)?;
-        let comment_keys: Vec<String> = conn.lskeys(1_000_000 as u64)?;
-
-        let mut comments = vec![];
-
-        for key in comment_keys {
-            let cmnt: Comment = conn.get(key)?;
-            comments.push(cmnt);
+        let comments_bytes: Vec<Vec<u8>> = conn.run_query(Query::new().arg("LGET").arg(name))?;
+        
+        let mut comments: Vec<Comment> = Vec::new();
+        for comment_bytes in &comments_bytes {
+            let comment: Comment = serde_json::from_slice(comment_bytes)
+                .map_err(|e| skytable::error::Error::ParseError(e.to_string()))?;
+            comments.push(comment);
         }
 
         conn.switch(DEPENDENCIES_TABLE)?;
-        let dep_keys: Vec<String> = conn.lskeys(1_000_000 as u64)?;
-
-        let mut dependencies = vec![];
-
-        for key in dep_keys {
-            let dep: PackageDependency = conn.get(key)?;
-            dependencies.push(dep);
+        let dependencies_bytes: Vec<Vec<u8>> = conn.run_query(Query::new().arg("LGET").arg(name))?;
+        
+        let mut dependencies: Vec<PackageDependency> = Vec::new();
+        for dependency_bytes in &dependencies_bytes {
+            let dependency: PackageDependency = serde_json::from_slice(dependency_bytes)
+                .map_err(|e| skytable::error::Error::ParseError(e.to_string()))?;
+            dependencies.push(dependency);
         }
 
         Ok(PackageData {
             basic,
             additional,
-            dependencies,
             comments,
+            dependencies,
         })
     }
 }
