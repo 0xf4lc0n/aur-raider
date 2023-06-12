@@ -112,18 +112,13 @@ impl DatabasePackageIO for SkytableIO {
     async fn get(&self, name: &str) -> Result<crate::models::PackageData> {
         let mut conn = self.pool.get()?;
 
-        let basic_table = format!("{}:{}", name, BASIC_PKGS_TABLE);
-        let advanced_table = format!("{}:{}", name, ADDITIONAL_PKGS_TABLE);
-        let comments_table = format!("{}:{}", name, COMMENTS_TABLE);
-        let deps_table = format!("{}:{}", name, DEPENDENCIES_TABLE);
-
-        conn.switch(basic_table)?;
+        conn.switch(BASIC_PKGS_TABLE)?;
         let basic: BasicPackageData = conn.get(name)?;
 
-        conn.switch(advanced_table)?;
+        conn.switch(ADDITIONAL_PKGS_TABLE)?;
         let additional: AdditionalPackageData = conn.get(name)?;
 
-        conn.switch(comments_table)?;
+        conn.switch(COMMENTS_TABLE)?;
         let comment_keys: Vec<String> = conn.lskeys(1_000_000 as u64)?;
 
         let mut comments = vec![];
@@ -133,7 +128,7 @@ impl DatabasePackageIO for SkytableIO {
             comments.push(cmnt);
         }
 
-        conn.switch(deps_table)?;
+        conn.switch(DEPENDENCIES_TABLE)?;
         let dep_keys: Vec<String> = conn.lskeys(1_000_000 as u64)?;
 
         let mut dependencies = vec![];
@@ -238,6 +233,7 @@ mod test {
 
         // Act
         skytable.flushdb()?;
+        skytable.create_tables()?;
         skytable.insert(&generated_pkg).await?;
         let retreived_pkg = skytable.get("Test").await?;
 
